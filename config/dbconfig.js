@@ -6,7 +6,7 @@ const option1 = {
 }
 
 const option2 = {
-    url: 'mongodb://nowinparis:W2jXbD9AGynu@localhost:27017/nowinparis',
+    url: 'mongodb://localhost:27017/nowinparis',
     opt: { useNewUrlParser: true, useUnifiedTopology: true }
 }
 
