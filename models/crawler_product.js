@@ -6,7 +6,6 @@ const crawlerProductsSchema = mongoose.Schema({
     status: {type: String, index: true, default: 'ready'},  //ready(준비중), enabled(판매중), disabled(판매정지)
     product_name: String,
     url: String,
-    retail_price: Number,
     price: Number,                   // 판매가
     sale_percentage:Number,          // 할인률
     ref: String,
