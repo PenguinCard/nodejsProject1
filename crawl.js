@@ -38,7 +38,7 @@ puppeteer.launch({ headless: false }).then(async broswer => {
     products = await CrawlerProduct.aggregate([{
         $match: {
             status: { $nin: ["removed", "no_product"]},
-            ref: /MFPCA00213/,
+            // ref: /MFPCA00213/,
             // ref: /CFPRO00886/,
             website: { $in: [1, 3]}
         }
@@ -50,7 +50,7 @@ puppeteer.launch({ headless: false }).then(async broswer => {
             as: "website_info"
         }
     }, {
-        $limit: 1
+        $limit: 10
     }, {
         $project: {
             ref: true,
@@ -69,7 +69,7 @@ puppeteer.launch({ headless: false }).then(async broswer => {
 
         for (let product of products) {
             // 검색 접두사, 접미어
-            const prefixes = [], suffixes = [];
+            const prefixes = [], suffixes = [], links = [];
 
             let { product_name, ref, website_info } = product;
             if (website_info.length > 0) {
@@ -88,6 +88,8 @@ puppeteer.launch({ headless: false }).then(async broswer => {
 
             // 접두사 또는 접미어가 없으면 다음 task로 넘김
             if(prefixes.length === 0 || suffixes.length === 0) continue;
+
+            const regex = new RegExp(`(${prefixes.join('|')}).*(${suffixes.join('|')})`)
 
             for (let prefix of prefixes){
                 for (let suffix of suffixes) {
@@ -115,43 +117,79 @@ puppeteer.launch({ headless: false }).then(async broswer => {
 
                     $("li[class^=basicList_item]").each((i, el) => {
                         const options = [];
-                        const title1 = $(el).find('[class^=basicList_mall_title] a[class^=basicList_mall] img').attr('alt');
-                        const title2 = $(el).find('[class^=basicList_mall_title] a[class^=basicList_mall]').text().trim()
-                        const title = title1 ? title1 : title2;
+                        const shop1 = $(el).find('[class^=basicList_mall_title] a[class^=basicList_mall] img').attr('alt');
+                        const shop2 = $(el).find('[class^=basicList_mall_title] a[class^=basicList_mall]').text().trim()
+                        const shop = shop1 ? shop1 : shop2;
 
-                        if(title !== '쇼핑몰별 최저가') {
-                            const price = parseInt($(el).find('span[class^=price_num]').text().replace(/[,원]/g, '').trim())
+                        if(shop !== '쇼핑몰별 최저가') {
+
+                            const title = $(el).find('[class^=basicList_title] a').text().trim();
+
                             $(el).find('[class^=basicList_option] li').each((i, el) => options.push($(el).text().trim()))
+                            const option = _.find(options, function (o) { return /배송비/.test(o) })
 
-                            const option = _.find(options, function (o) {
-                                return /배송비/.test(o)
-                            })
                             const deli_price = option?.replace(/\D/g, '').trim() ? parseInt(option.replace(/\D/g, '').trim()) : 0;
+                            const price = parseInt($(el).find('span[class^=price_num]').text().replace(/[,원]/g, '').trim())
                             const total_price = price + deli_price;
 
-                            data.push({
-                                title, price, deli_price, total_price,
-                            })
+                            data.push({ shop, price, title, deli_price, total_price })
 
-                            console.log(i, title, price, deli_price);
+                            console.log(i, shop, title, price, deli_price);
+                        } else {
+                            const link = $(el).find('[class^=basicList_mall_title] a[class^=basicList_mall]').attr('href');
+                            links.push(link);
                         }
                     })
 
-                    await page.waitForTimeout(4000);
+                    await page.waitForTimeout(5000);
                 }
+            }
+            if(links.length > 0) {
+                for (let link of links) {
+                    await page.goto(link, {waitUntil: "networkidle2"});
+
+                    html = await page.content();
+                    $ = cheerio.load(html);
+
+                    const title = $('[class^=top_summary_title] h2').text().replace('해외', '').trim();
+
+                    $('[class^=productByMall_list] tbody tr').each((i, el) => {
+                        const shop1 = $(el).find('[class^=productByMall_mall_area] a img').attr('alt');
+                        const shop2 = $(el).find('[class^=productByMall_mall_area] a').text().trim()
+                        const shop = shop1 ? shop1 : shop2;
+
+                        const total_price = parseInt($(el).find('[class^=productByMall_price] em').text().replace(/\D|\s/g, ''))
+                        const deli_price = parseInt($(el).find('[class^=productByMall_gift]').text().replace(/\D|\s/g, ''))
+                        const price = total_price - deli_price
+
+                        console.log(i, shop, title, price, deli_price, total_price);
+
+                        data.push({shop, price, title, deli_price, total_price})
+                    })
+
+                    await page.waitForTimeout(5000);
+                }
+            }
+
+            console.log('data1', data);
+
+            data = _.uniqBy(data, 'shop');
+
+            console.log('data2', data);
+            data = _.filter(data, function(o) { return regex.test(o.title) })
+
+            console.log(data);
+
+            for (let d of data) {
+                const {title, price, deli_price, total_price, shop} = d;
+                await conn.execute(
+                    `INSERT INTO
+                     SHOP_ITEMS(title, price, deli_price, total_price, shop_name)
+                     VALUES('${title}', ${price}, ${deli_price}, ${total_price}, '${shop}')`
+                )
             }
         }
     }
-
-
-    // for (let d of data) {
-    //     const {title, price, deli_price, total_price, shop_name} = d;
-    //     await conn.execute(
-    //         `INSERT INTO
-    //                  SHOP_ITEMS(title, price, deli_price, total_price, shop_name)
-    //                  VALUES('${title}', ${price}, ${deli_price}, ${total_price}, '${shop_name}')`
-    //     )
-    // }
 })
 
 
